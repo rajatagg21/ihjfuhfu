@@ -1,0 +1,13 @@
+import unicodedata
+import re
+
+def normalize_text(s: str) -> str:
+    if s is None:
+        return ""
+    # 1. Normalize Unicode to NFC (canonical form)
+    s = unicodedata.normalize("NFC", s)
+    # 2. Remove BOM, zero-width chars, etc.
+    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
+    # 3. Strip leading/trailing spaces (including non-breaking space)
+    s = s.strip().replace("\u00A0", " ")
+    return s
