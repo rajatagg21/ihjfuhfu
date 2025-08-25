@@ -1,13 +1,84 @@
-import unicodedata
-import re
+Got it ✅
+You want to **shrink your XLM-Roberta tokenizer and model** by keeping only a subset of tokens that actually appear in your dataset (instead of carrying all \~250k tokens). This way you reduce embedding matrix size and overall model footprint.
 
-def normalize_text(s: str) -> str:
-    if s is None:
-        return ""
-    # 1. Normalize Unicode to NFC (canonical form)
-    s = unicodedata.normalize("NFC", s)
-    # 2. Remove BOM, zero-width chars, etc.
-    s = re.sub(r"[\u200B-\u200D\uFEFF]", "", s)
-    # 3. Strip leading/trailing spaces (including non-breaking space)
-    s = s.strip().replace("\u00A0", " ")
-    return s
+Here’s a production-level approach in **Python** using Hugging Face 🤗 `transformers`:
+
+```python
+from transformers import AutoTokenizer, AutoModel
+import torch
+
+# ----------------------------
+# 1. Load original tokenizer & model
+# ----------------------------
+model_name = "xlm-roberta-base"  # or your MiniLM distilled XLM-R
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
+
+# ----------------------------
+# 2. Collect tokens you want to keep
+# ----------------------------
+texts = [
+    "Stock market is rising today!",
+    "निफ़्टी 50 गिरा हुआ है",
+    "Your order has been shipped."
+]  # <- Replace with your dataset
+
+# tokenize all texts and collect unique ids
+token_ids_to_keep = set()
+for text in texts:
+    ids = tokenizer.encode(text, add_special_tokens=True)
+    token_ids_to_keep.update(ids)
+
+# Always keep special tokens
+special_ids = tokenizer.all_special_ids
+token_ids_to_keep.update(special_ids)
+
+token_ids_to_keep = sorted(list(token_ids_to_keep))
+print(f"Keeping {len(token_ids_to_keep)} tokens out of {len(tokenizer)}")
+
+# ----------------------------
+# 3. Build reduced tokenizer vocab
+# ----------------------------
+# map old -> new ids
+old_to_new_id = {old_id: new_id for new_id, old_id in enumerate(token_ids_to_keep)}
+
+new_vocab = {tokenizer.convert_ids_to_tokens(old_id): new_id
+             for new_id, old_id in enumerate(token_ids_to_keep)}
+
+tokenizer_reduced = tokenizer.__class__.from_pretrained(model_name)
+tokenizer_reduced.vocab = new_vocab
+tokenizer_reduced.ids_to_tokens = {v: k for k, v in new_vocab.items()}
+tokenizer_reduced._tokenizer.post_processor = tokenizer._tokenizer.post_processor  # preserve special handling
+
+# ----------------------------
+# 4. Shrink model embeddings
+# ----------------------------
+with torch.no_grad():
+    old_emb = model.get_input_embeddings().weight.data
+    new_emb = old_emb[token_ids_to_keep, :]
+
+    new_embedding_layer = torch.nn.Embedding(len(token_ids_to_keep), old_emb.shape[1])
+    new_embedding_layer.weight.data = new_emb.clone()
+
+    model.set_input_embeddings(new_embedding_layer)
+
+# ----------------------------
+# 5. Save reduced model + tokenizer
+# ----------------------------
+save_dir = "./reduced_xlm_roberta"
+model.save_pretrained(save_dir)
+tokenizer_reduced.save_pretrained(save_dir)
+
+print("✅ Reduced model saved at:", save_dir)
+```
+
+### 🔑 Key points:
+
+* `token_ids_to_keep` = only tokens seen in your dataset + special tokens (`<s>, </s>, <pad>, <unk>`).
+* Embedding matrix is reduced to that subset → big memory/size savings.
+* You must remap old IDs → new IDs in tokenizer.
+* Works for `AutoModelForSequenceClassification` etc. as well.
+
+---
+
+Do you want me to also give you a **fast tokenizer rebuild** (using `tokenizers` lib) that physically **drops unused tokens from SentencePiece vocab** (not just masking in embedding), for maximum size reduction?
