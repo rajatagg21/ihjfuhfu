@@ -1,118 +1,74 @@
-Got it ✅ let’s do this step-by-step and cleanly:
-
----
-
-### 🎯 Your setup
-
-1. You already have:
-
-   * A pretrained XLM-R tokenizer (`AutoTokenizer.from_pretrained(model_name)`).
-   * A text (corpus) you want to tokenize → so you can extract tokens actually used.
-   * A separate **list of token IDs** you want to keep (your reduced vocab).
-
-2. You want:
-
-   * A **new tokenizer** with only those tokens.
-   * A **resized model** to match the reduced tokenizer.
-
----
-
-### ✅ Code
-
-```python
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import pandas as pd
+from transformers import AutoTokenizer
+from pathlib import Path
 import sentencepiece as spm
-import os
 
-# ----------------------
-# 1. Load tokenizer & model
-# ----------------------
-model_name = "xlm-roberta-base"   # replace with your fine-tuned model if needed
-old_tokenizer = AutoTokenizer.from_pretrained(model_name)
-old_model = AutoModelForSequenceClassification.from_pretrained(model_name)
+# ----------------------------
+# Config
+# ----------------------------
+MODEL_NAME = "nreimers/mMiniLMv2-L6-H384-distilled-from-XLMR-Large"
+TEXT_FILE = "data/corpus.txt"    # EN + KO text file
+CSV_FILE = "data/extra_tokens.csv"  # CSV with a column 'token_id'
+OUTPUT_DIR = Path("reduced_tokenizer")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ----------------------
-# 2. Collect tokens you want to keep
-# ----------------------
-# Example: from text
-text = "Stock market finance is going up."
-tokens = old_tokenizer.tokenize(text)
+# ----------------------------
+# 1. Load original tokenizer
+# ----------------------------
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)  # XLM-R uses SentencePiece
 
-# Example: from token ids list
-token_ids_to_keep = [0, 1, 2, 3, 100, 101]  # replace with your IDs
-tokens_from_ids = [old_tokenizer.convert_ids_to_tokens(i) for i in token_ids_to_keep]
+# ----------------------------
+# 2. Collect token IDs from corpus
+# ----------------------------
+used_token_ids = set()
+with open(TEXT_FILE, "r", encoding="utf-8") as f:
+    for line in f:
+        enc = tokenizer(line.strip(), add_special_tokens=False)
+        used_token_ids.update(enc["input_ids"])
 
-# Union of both sets
-tokens_to_keep = set(tokens) | set(tokens_from_ids)
+# ----------------------------
+# 3. Add extra token IDs from CSV
+# ----------------------------
+extra_ids = pd.read_csv(CSV_FILE)["token_id"].tolist()
+used_token_ids.update(extra_ids)
 
-# Always keep special tokens
-special_tokens = [old_tokenizer.cls_token, old_tokenizer.sep_token,
-                  old_tokenizer.pad_token, old_tokenizer.unk_token]
-tokens_to_keep.update(special_tokens)
+print(f"Original vocab size: {len(tokenizer)}")
+print(f"Reduced vocab size: {len(used_token_ids)}")
 
-print(f"Keeping {len(tokens_to_keep)} tokens")
+# ----------------------------
+# 4. Export vocab to file
+# ----------------------------
+# XLM-R SentencePiece vocab comes from tokenizer.vocab_file
+spm_model_file = tokenizer.vocab_file  # points to spm.model
 
-# ----------------------
-# 3. Train a new SentencePiece model with reduced vocab
-# ----------------------
-with open("reduced_vocab.txt", "w", encoding="utf-8") as f:
-    for tok in tokens_to_keep:
-        f.write(tok + "\n")
+# Dump full vocab from SentencePiece
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor(model_file=spm_model_file)
 
+with open(OUTPUT_DIR / "filtered_vocab.txt", "w", encoding="utf-8") as f:
+    for idx in sorted(used_token_ids):
+        piece = sp.id_to_piece(idx)
+        f.write(piece + "\n")
+
+# ----------------------------
+# 5. Train new SentencePiece model restricted to this vocab
+# ----------------------------
+# Important: we must supply input text (corpus) + vocab file
 spm.SentencePieceTrainer.Train(
-    f"--input=reduced_vocab.txt "
-    f"--model_prefix=reduced_tokenizer "
-    f"--vocab_size={len(tokens_to_keep)} "
-    "--character_coverage=1.0 "
-    "--model_type=unigram"
+    input=TEXT_FILE,
+    model_prefix=str(OUTPUT_DIR / "spm"),
+    vocab_size=len(used_token_ids),
+    user_defined_symbols=[],  # can add special tokens if needed
+    vocabulary=str(OUTPUT_DIR / "filtered_vocab.txt"),
+    character_coverage=1.0,
+    model_type="unigram"  # XLM-R uses SentencePiece Unigram
 )
 
-# ----------------------
-# 4. Load new tokenizer
-# ----------------------
-new_tokenizer = AutoTokenizer.from_pretrained(
-    "./",              # current dir
-    vocab_file="reduced_tokenizer.model",
-    use_fast=False
-)
+# ----------------------------
+# 6. Save Hugging Face tokenizer wrapper
+# ----------------------------
+# Replace tokenizer files with reduced model
+tokenizer._tokenizer.model = spm.SentencePieceProcessor(model_file=str(OUTPUT_DIR / "spm.model"))
+tokenizer.save_pretrained(OUTPUT_DIR)
 
-print("New tokenizer size:", len(new_tokenizer))
-
-# ----------------------
-# 5. Resize model embeddings
-# ----------------------
-old_vocab_size = old_model.get_input_embeddings().weight.size(0)
-new_vocab_size = len(new_tokenizer)
-
-print(f"Resizing embeddings: {old_vocab_size} -> {new_vocab_size}")
-old_model.resize_token_embeddings(new_vocab_size)
-
-# ----------------------
-# 6. Save reduced tokenizer + model
-# ----------------------
-save_dir = "reduced_model"
-os.makedirs(save_dir, exist_ok=True)
-new_tokenizer.save_pretrained(save_dir)
-old_model.save_pretrained(save_dir)
-
-print("✅ Reduced tokenizer + model saved at:", save_dir)
-```
-
----
-
-### 🔑 What this does
-
-1. Extracts the tokens you want (`tokens_to_keep`) → from your text + from your token ID list.
-2. Trains a **new SentencePiece model** (`reduced_tokenizer.model`) only with those tokens.
-3. Builds a **new Hugging Face tokenizer** from that `.model`.
-4. Resizes your **XLM-R model embeddings** to the smaller vocab.
-5. Saves both for Android/TFLite export.
-
----
-
-⚡ Now you have a self-contained `reduced_model/` folder →
-with `config.json`, `pytorch_model.bin`, and `reduced_tokenizer.model` → you can load it like a normal HF model.
-
----
-
-Do you want me to also show you how to **verify** the new tokenizer really only uses your reduced vocab (like printing its vocab file)?
+print("✅ Reduced tokenizer saved at:", OUTPUT_DIR)
