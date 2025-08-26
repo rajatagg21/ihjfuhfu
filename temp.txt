@@ -72,3 +72,60 @@ tokenizer._tokenizer.model = spm.SentencePieceProcessor(model_file=str(OUTPUT_DI
 tokenizer.save_pretrained(OUTPUT_DIR)
 
 print("✅ Reduced tokenizer saved at:", OUTPUT_DIR)
+
+
+
+
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+MODEL_NAME = "nreimers/mMiniLMv2-L6-H384-distilled-from-XLMR-Large"
+REDUCED_TOKENIZER_PATH = "reduced_tokenizer"
+OUTPUT_DIR = "reduced_model"
+
+# 1. Load reduced tokenizer
+tokenizer = AutoTokenizer.from_pretrained(REDUCED_TOKENIZER_PATH, use_fast=False)
+
+# 2. Load original model
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+
+# 3. Map old -> new vocab
+old_tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)
+old_vocab_size = len(old_tokenizer)
+new_vocab_size = len(tokenizer)
+
+print(f"Old vocab size: {old_vocab_size}")
+print(f"New vocab size: {new_vocab_size}")
+
+# SentencePiece piece → id mapping
+old_vocab = {old_tokenizer.convert_ids_to_tokens(i): i for i in range(old_vocab_size)}
+new_vocab = {token: idx for idx, token in tokenizer.get_vocab().items()}
+
+# 4. Build reduced embedding matrix
+old_embeds = model.get_input_embeddings().weight.data
+new_embeds = torch.zeros((new_vocab_size, old_embeds.shape[1]))
+
+for tok, new_id in new_vocab.items():
+    if tok in old_vocab:
+        old_id = old_vocab[tok]
+        new_embeds[new_id] = old_embeds[old_id]
+    else:
+        # If new token was not in old vocab → random init
+        new_embeds[new_id] = torch.randn(old_embeds.shape[1]) * 0.02
+
+# 5. Replace embedding layer
+new_embedding_layer = torch.nn.Embedding(new_vocab_size, old_embeds.shape[1])
+new_embedding_layer.weight.data = new_embeds
+model.set_input_embeddings(new_embedding_layer)
+
+# 6. (Optional) also resize output head if it ties weights
+if hasattr(model, "lm_head"):
+    model.lm_head.decoder = torch.nn.Linear(old_embeds.shape[1], new_vocab_size, bias=False)
+    model.lm_head.decoder.weight.data = new_embeds.clone()
+
+# 7. Save reduced model + tokenizer
+model.save_pretrained(OUTPUT_DIR)
+tokenizer.save_pretrained(OUTPUT_DIR)
+
+print("✅ Reduced model + tokenizer saved to", OUTPUT_DIR)
+
