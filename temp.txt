@@ -64,6 +64,17 @@ spm.SentencePieceTrainer.Train(
     model_type="unigram"  # XLM-R uses SentencePiece Unigram
 )
 
+spm.SentencePieceTrainer.Train(
+    f"--input=data/corpus.txt "
+    f"--model_prefix=reduced_tokenizer/spm "
+    f"--vocab_size=5000 "
+    f"--model_type=unigram "
+    f"--character_coverage=1.0 "
+    f"--vocabulary_filename=reduced_tokenizer/filtered_vocab.txt "
+    f"--vocabulary_threshold=0"
+)
+
+
 # ----------------------------
 # 6. Save Hugging Face tokenizer wrapper
 # ----------------------------
