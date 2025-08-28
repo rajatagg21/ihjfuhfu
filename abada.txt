@@ -1,0 +1,105 @@
+@AndroidEntryPoint
+class BatchInferenceFragment : Fragment() {
+
+    private var _binding: FragmentBatchInferenceBinding? = null
+    private val binding get() = _binding!!
+
+    private val csvPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri?.let { handleCsvFile(it) }
+        }
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        _binding = FragmentBatchInferenceBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        binding.btnPickCsv.setOnClickListener {
+            openCsvFilePicker()
+        }
+    }
+
+    private fun openCsvFilePicker() {
+        csvPickerLauncher.launch(arrayOf("text/csv"))
+    }
+
+    private fun handleCsvFile(uri: Uri) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val samples = parseCsv(uri)
+            val summary = runBatchInference(samples)
+            saveResultsToCsv(results)
+
+            withContext(Dispatchers.Main) {
+                binding.tvSummary.text = summary
+                Toast.makeText(requireContext(), "Batch inference completed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun parseCsv(uri: Uri): List<InputSample> {
+        val samples = mutableListOf<InputSample>()
+        requireContext().contentResolver.openInputStream(uri)?.use { inputStream ->
+            InputStreamReader(inputStream).use { reader ->
+                val csvReader = CSVReader(reader)
+                val allRows = csvReader.readAll()
+                if (allRows.isNotEmpty()) {
+                    val headerSkipped = allRows.drop(1)
+                    headerSkipped.forEach { row ->
+                        if (row.isNotEmpty()) {
+                            samples.add(InputSample(row[0].trim()))
+                        }
+                    }
+                }
+            }
+        }
+        return samples
+    }
+
+    private val results = mutableListOf<Result>()
+
+    private suspend fun runBatchInference(samples: List<InputSample>): String {
+        results.clear()
+        val startTime = System.currentTimeMillis()
+
+        samples.forEach { sample ->
+            val predicted = InferenceManager.predict(sample.text) // assume suspend
+            results.add(Result(sample.text, predicted))
+        }
+
+        val totalTime = System.currentTimeMillis() - startTime
+        val avgTime = if (samples.isNotEmpty()) totalTime.toDouble() / samples.size else 0.0
+
+        return """
+            ✅ Batch Inference Summary
+            Total Notifications: ${samples.size}
+            Total Inference Time: ${totalTime} ms
+            Avg Inference Time: ${"%.2f".format(avgTime)} ms
+        """.trimIndent()
+    }
+
+    private fun saveResultsToCsv(results: List<Result>) {
+        val fileName = "batch_results_${System.currentTimeMillis()}.csv"
+        val file = File(requireContext().getExternalFilesDir(null), fileName)
+
+        FileWriter(file).use { writer ->
+            val csvWriter = CSVWriter(writer)
+            csvWriter.writeNext(arrayOf("text", "predicted_label"))
+            results.forEach { result ->
+                csvWriter.writeNext(arrayOf(result.text, result.predictedLabel))
+            }
+            csvWriter.close()
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}
