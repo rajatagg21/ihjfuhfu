@@ -85,18 +85,57 @@ class BatchInferenceFragment : Fragment() {
     }
 
     private fun saveResultsToCsv(results: List<Result>) {
-        val fileName = "batch_results_${System.currentTimeMillis()}.csv"
-        val file = File(requireContext().getExternalFilesDir(null), fileName)
+    // ✅ Define folder + file name separately for easy debugging
+    val folderName = "NotificationFilterReport"
 
-        FileWriter(file).use { writer ->
-            val csvWriter = CSVWriter(writer)
-            csvWriter.writeNext(arrayOf("text", "predicted_label"))
-            results.forEach { result ->
-                csvWriter.writeNext(arrayOf(result.text, result.predictedLabel))
-            }
-            csvWriter.close()
-        }
+    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+    val sampleCount = results.size
+    val reportFileName = "clf_report_${timeStamp}_s${sampleCount}.csv"
+
+    val values = ContentValues().apply {
+        put(MediaStore.Downloads.DISPLAY_NAME, reportFileName)
+        put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+        put(
+            MediaStore.Downloads.RELATIVE_PATH,
+            "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
+        )
+        put(MediaStore.Downloads.IS_PENDING, 1)
     }
+
+    val resolver = requireContext().contentResolver
+    val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+    val itemUri = resolver.insert(collection, values)
+
+    if (itemUri != null) {
+        resolver.openOutputStream(itemUri)?.use { outputStream ->
+            OutputStreamWriter(outputStream).use { writer ->
+                val csvWriter = CSVWriter(writer)
+                csvWriter.writeNext(arrayOf("text", "predicted_label"))
+                results.forEach { result ->
+                    csvWriter.writeNext(arrayOf(result.text, result.predictedLabel))
+                }
+                csvWriter.close()
+            }
+        }
+
+        // ✅ mark as finished
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(itemUri, values, null, null)
+
+        // ✅ Debug logs for clarity
+        Log.d("BatchInference", "Report folder: $folderName")
+        Log.d("BatchInference", "Report file: $reportFileName")
+        Log.d("BatchInference", "Saved CSV URI: $itemUri")
+
+        Toast.makeText(
+            requireContext(),
+            "Saved in Downloads/$folderName as $reportFileName",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+}
+
 
     override fun onDestroyView() {
         super.onDestroyView()
