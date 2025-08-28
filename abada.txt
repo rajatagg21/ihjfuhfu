@@ -1,3 +1,13 @@
+fun buildLabelStatsString(labelCounts: Map<String, Int>): String {
+    val total = labelCounts.values.sum().takeIf { it > 0 } ?: return "No data available"
+
+    return labelCounts.entries.joinToString(separator = "\n") { (label, count) ->
+        val percentage = (count.toDouble() / total) * 100
+        "$label: $count (${String.format("%.2f", percentage)}%)"
+    }
+}
+
+
 @AndroidEntryPoint
 class BatchInferenceFragment : Fragment() {
 
