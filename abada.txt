@@ -152,3 +152,45 @@ class BatchInferenceFragment : Fragment() {
         _binding = null
     }
 }
+
+
+
+
+text
+"Your order has been shipped.
+Track it here: https://example.com/track/123
+Expected delivery: Tomorrow"
+"Meeting Reminder:
+Topic: Q3 Review
+Time: 3:00 PM
+Location: Zoom link in email"
+"Hi Rajat,
+Thanks for your payment of ₹2,499.
+Transaction ID: TXN998877
+Keep this for your records."
+"Flash Sale!
+Get 70% OFF
+Valid: Today only
+Items: Mobiles, Laptops, Accessories"
+"Your OTP is 678901
+Valid for 10 minutes.
+Do not share it with anyone."
+"Bank Alert:
+Balance: ₹1,23,456.00
+Last Debit: ₹4,000 at ATM
+Available Credit: ₹50,000"
+"Invitation:
+AI & Data Science Webinar
+Date: 12 Sept 2025
+Time: 6:00 PM
+Register: https://bit.ly/ai-webinar"
+"Hey!
+Dinner at John's place tonight.
+Bring snacks if possible :)"
+"Parcel Update:
+Courier: BlueDart
+Tracking ID: BD123456789
+Status: Out for delivery"
+"Congratulations!
+You've won a scratch card worth ₹100
+Redeem in the app NOW!"
