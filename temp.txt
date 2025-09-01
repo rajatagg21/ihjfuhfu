@@ -1,91 +1,16 @@
-import pandas as pd
-from transformers import AutoTokenizer
-from pathlib import Path
 import sentencepiece as spm
+from sentencepiece import sentencepiece_model_pb2 as sp_pb2
 
-# ----------------------------
-# Config
-# ----------------------------
-MODEL_NAME = "nreimers/mMiniLMv2-L6-H384-distilled-from-XLMR-Large"
-TEXT_FILE = "data/corpus.txt"    # EN + KO text file
-CSV_FILE = "data/extra_tokens.csv"  # CSV with a column 'token_id'
-OUTPUT_DIR = Path("reduced_tokenizer")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# Load model.proto
+model = sp_pb2.ModelProto()
+with open("my_tokenizer.model", "rb") as f:
+    model.ParseFromString(f.read())
 
-# ----------------------------
-# 1. Load original tokenizer
-# ----------------------------
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=False)  # XLM-R uses SentencePiece
-
-# ----------------------------
-# 2. Collect token IDs from corpus
-# ----------------------------
-used_token_ids = set()
-with open(TEXT_FILE, "r", encoding="utf-8") as f:
-    for line in f:
-        enc = tokenizer(line.strip(), add_special_tokens=False)
-        used_token_ids.update(enc["input_ids"])
-
-# ----------------------------
-# 3. Add extra token IDs from CSV
-# ----------------------------
-extra_ids = pd.read_csv(CSV_FILE)["token_id"].tolist()
-used_token_ids.update(extra_ids)
-
-print(f"Original vocab size: {len(tokenizer)}")
-print(f"Reduced vocab size: {len(used_token_ids)}")
-
-# ----------------------------
-# 4. Export vocab to file
-# ----------------------------
-# XLM-R SentencePiece vocab comes from tokenizer.vocab_file
-spm_model_file = tokenizer.vocab_file  # points to spm.model
-
-# Dump full vocab from SentencePiece
-import sentencepiece as spm
-sp = spm.SentencePieceProcessor(model_file=spm_model_file)
-
-with open(OUTPUT_DIR / "filtered_vocab.txt", "w", encoding="utf-8") as f:
-    for idx in sorted(used_token_ids):
-        piece = sp.id_to_piece(idx)
-        f.write(piece + "\n")
-
-# ----------------------------
-# 5. Train new SentencePiece model restricted to this vocab
-# ----------------------------
-# Important: we must supply input text (corpus) + vocab file
-spm.SentencePieceTrainer.Train(
-    input=TEXT_FILE,
-    model_prefix=str(OUTPUT_DIR / "spm"),
-    vocab_size=len(used_token_ids),
-    user_defined_symbols=[],  # can add special tokens if needed
-    vocabulary=str(OUTPUT_DIR / "filtered_vocab.txt"),
-    character_coverage=1.0,
-    model_type="unigram"  # XLM-R uses SentencePiece Unigram
-)
-
-spm.SentencePieceTrainer.Train(
-    f"--input=data/corpus.txt "
-    f"--model_prefix=reduced_tokenizer/spm "
-    f"--vocab_size=5000 "
-    f"--model_type=unigram "
-    f"--character_coverage=1.0 "
-    f"--vocabulary_filename=reduced_tokenizer/filtered_vocab.txt "
-    f"--vocabulary_threshold=0"
-)
-
-
-# ----------------------------
-# 6. Save Hugging Face tokenizer wrapper
-# ----------------------------
-# Replace tokenizer files with reduced model
-tokenizer._tokenizer.model = spm.SentencePieceProcessor(model_file=str(OUTPUT_DIR / "spm.model"))
-tokenizer.save_pretrained(OUTPUT_DIR)
-
-print("✅ Reduced tokenizer saved at:", OUTPUT_DIR)
-
-
-
+# Save vocab to file
+with open("my_tokenizer.vocab", "w", encoding="utf-8") as fout:
+    for p in model.pieces:
+        fout.write(f"{p.piece}\t{p.score}\n")
+---------------------------------------------------------------------------------------------
 
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
